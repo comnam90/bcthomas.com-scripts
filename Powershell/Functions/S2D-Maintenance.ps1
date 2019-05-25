@@ -1,12 +1,62 @@
-# dot source to import a number of helper functions for performing maintenance
-# on S2D Clusters
+<#
+This file contains powershell functions, designed to make it easier
+to perform maintenance on S2D Clusters and nodes.
 
-# Functions
-## Enable-S2DNodeMaintenance
-## Disable-S2DNodeMaintenance
-## Get-S2DNodeMaintenanceState
+Dot source the file to import the functions
+eg. PS> . C:\Scripts\S2D-Maintenance.ps1
 
-Function Enable-S2DNodeMaintenance { }
+Functions:
+- Enable-S2DNodeMaintenance
+- Disable-S2DNodeMaintenance
+- Get-S2DNodeMaintenanceState
+
+Maintained by: Ben Thomas (@NZ_BenThomas)
+Version: 1.0.0
+Last Updated: 2019-05-25
+Website: https://bcthomas.com
+
+Changelog:
+ - 1.0.0
+  - Initial Commit
+#>
+
+Function Enable-S2DNodeMaintenance { 
+    [cmdletbinding()]
+    Param(
+        [alias('ComputerName', 'StorageNodeFriendlyName')]
+        [string]$Name = $Env:ComputerName,
+        [switch]$OnlyCluster,
+        [switch]$OnlyStorage
+    )
+    begin {
+        $AvailableModules = Get-Module -ListAvailable
+        if( $AvailableModules.Name -inotcontains "FailoverClusters" -or $AvailableModules.Name -inotcontains "Storage" ){
+            throw "Required modules FailoverClusters and Storage are not available"
+        }
+    }
+    process {
+        $UnhealthyDisks = Get-VirtualDisk -CimSession $Name | Where-Object { 
+            $_.HealthStatus -ine "Healthy" -and $_.OperationalStatus -ine "OK" 
+        }
+        if($UnhealthyDisks.Count -gt 0){
+            throw "Cannot enter maintenance mode as the follow volumes are unhealthy`n$($UnhealthyDisks.FriendlyName -join ", ")"
+        }
+        if ( -not $OnlyStorage ) {
+            $ClusterName = Get-Cluster -Name $Name | Select-Object -ExpandProperty Name
+            if ( (Get-ClusterNode -Name $Name -Cluster $ClusterName).State -ieq 'Up' ) {
+                Suspend-ClusterNode -Name $Name -Drain -Cluster $ClusterName -Wait | Out-Null
+            }
+        }
+        if ( -not $OnlyCluster ) {
+            $ScaleUnit = Get-StorageFaultDomain -Type StorageScaleUnit -CimSession $Name | Where-Object { $_.FriendlyName -eq $Name }
+            $ScaleUnit | Enable-StorageMaintenanceMode -CimSession $Name | Out-Null
+            Start-Sleep -Seconds 5
+        }
+    }
+    end {
+        Get-S2DNodeMaintenanceState -Name $Name
+    }
+}
 
 Function Disable-S2DNodeMaintenance {
     [cmdletbinding()]
