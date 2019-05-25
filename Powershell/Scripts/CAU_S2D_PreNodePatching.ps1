@@ -37,13 +37,14 @@ if ( $ClusterPhysicalDisks.where(
 # Enter Storage Maintenance Mode
 try {
     # Suspend cluster node first, otherwise CAU will fail to pause it after this script finishes
-    Suspend-ClusterNode -Name $ComputerName -Drain:$true -RetryDrainOnFailure:$true -Wait:$true -Confirm:$false -ErrorAction Stop
+    Suspend-ClusterNode -Name $ComputerName -Drain -Wait -ErrorAction Stop
     # Actually enable maintenance mode
     $ScaleUnit | Enable-StorageMaintenanceMode -ErrorAction Stop
 }
 catch {
+    Write-Warning "Ran into an issue: $($PSItem.ToString())"
     # Make sure node is brought back out of maintenance
     $ScaleUnit | Disable-StorageMaintenanceMode 
-    Resume-ClusterNode -Name $ComputerName -Failback:$true -Confirm:$false
+    Resume-ClusterNode -Name $ComputerName -Failback Immediate 
     throw "Failed to enter storage maintenance mode, try again"
 }
