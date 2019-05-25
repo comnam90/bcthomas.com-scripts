@@ -16,10 +16,12 @@ Last Updated: 2019-05-25
 Website: https://bcthomas.com
 
 Changelog:
- - 1.0.0
+ - 1.0.0 (2019-05-25)
   - Initial Commit
- - 1.0.1
+ - 1.0.1 (2019-05-25)
   - Added verbose output
+ - 1.0.2 (2019-05-25)
+  - Disabled Verbose Output on Get-Module
 #>
 
 Function Enable-S2DNodeMaintenance { 
@@ -32,7 +34,7 @@ Function Enable-S2DNodeMaintenance {
     )
     begin {
         Write-Verbose "Checking that the required powershell modules are available"
-        $AvailableModules = Get-Module -ListAvailable
+        $AvailableModules = Get-Module -ListAvailable -Verbose:$false
         if ( $AvailableModules.Name -inotcontains "FailoverClusters" -or $AvailableModules.Name -inotcontains "Storage" ) {
             throw "Required modules FailoverClusters and Storage are not available"
         }
@@ -82,7 +84,7 @@ Function Disable-S2DNodeMaintenance {
     )
     begin {
         Write-Verbose "Checking that the required powershell modules are available"
-        $AvailableModules = Get-Module -ListAvailable
+        $AvailableModules = Get-Module -ListAvailable -Verbose:$false
         if ( $AvailableModules.Name -inotcontains "FailoverClusters" -or $AvailableModules.Name -inotcontains "Storage" ) {
             throw "Required modules FailoverClusters and Storage are not available"
         }
@@ -126,7 +128,7 @@ Function Get-S2DNodeMaintenanceState {
     )
     begin {
         Write-Verbose "Checking that the required powershell modules are available"
-        $AvailableModules = Get-Module -ListAvailable
+        $AvailableModules = Get-Module -ListAvailable -Verbose:$false
         if ( $AvailableModules.Name -inotcontains "FailoverClusters" -or $AvailableModules.Name -inotcontains "Storage" ) {
             throw "Required modules FailoverClusters and Storage are not available"
         }
