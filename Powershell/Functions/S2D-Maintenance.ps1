@@ -10,6 +10,7 @@ Functions:
 - Disable-S2DNodeMaintenance
 - Get-S2DNodeMaintenanceState
 - Stop-S2DCluster
+- Start-S2DCluster
 
 Maintained by: Ben Thomas (@NZ_BenThomas)
 Version: 1.0.3
@@ -25,6 +26,7 @@ Changelog:
   - Disabled Verbose Output on Get-Module
  - 1.0.3 (2019-05-26)
   - Added Stop-S2DCluster command
+  - Added Start-S2DCluster command
 #>
 
 Function Enable-S2DNodeMaintenance { 
@@ -190,8 +192,25 @@ Function Get-S2DNodeMaintenanceState {
 }
 
 Function Stop-S2DCluster {
+    <#
+        .Synopsis
+        Used to shutdown an S2D Cluster for Maintenance.
+        .Description
+        This command can be used to completely shutdown an S2D Cluster before
+        performing offline maintenance. It can be run against multiple clusters
+        remotely. The command will confirm shutting down each component by default
+        but this can be skipped by using -Confirm:$false
+        .Parameter Name
+        The target cluster name that you want to shutdown.
+        .Parameter SkipVirtualDiskCheck
+        When the command executes, it will make sure all volumes are online and 
+        healthy before shutting anything down. This switch can be used to skip
+        these checks if you know things are unhealthy and need to shutdown anyway.
+    #>
     [cmdletbinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
+        [parameter(Mandatory)]
+        [alias('Cluster')]
         [string[]]$Name,
         [switch]$SkipVirtualDiskCheck
     )
@@ -237,7 +256,7 @@ Function Stop-S2DCluster {
                         )
                     ) {
                         try {
-                            $CSV | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop
+                            $CSV | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop | Out-Null
                         }
                         catch {
                             Throw "Something went wrong when trying to stop $($CSV.Name)`nRerun the command.`n$($PSItem.ToString())"
@@ -252,7 +271,7 @@ Function Stop-S2DCluster {
                     )
                 ) {
                     try {
-                        $ClusterPool | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop
+                        $ClusterPool | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop | Out-Null
                     }
                     catch {
                         Throw "Something went wrong when trying to stop $($ClusterPool.Name)`nRerun the command.`n$($PSItem.ToString())"
@@ -303,5 +322,85 @@ Function Stop-S2DCluster {
     end { 
         Write-Verbose "Returning results"
         $results
+    }
+}
+
+Function Start-S2DCluster {
+    <#
+        .Synopsis
+        Used to start an S2D Cluster after maintenance.
+        .Description
+        This command can be used to start up an S2D Cluster afte performing 
+        offline maintenance. It will run locally or remotely but only against
+        a single target.
+        .Parameter ComputerName
+        The name of a host in the cluster you want to start.
+    #>
+    [cmdletbinding()]
+    param(
+        [alias('ClusterNode')]
+        [string]$ComputerName = $Env:ComputerName
+    )
+    begin { 
+    }
+    process {
+        try {
+            # Force Cluster Online on single Node
+            Write-Verbose "$ComputerName - Starting Cluster on a single node"
+            $NodeSvc = Get-Service clussvc -ComputerName $ComputerName
+            if ($NodeSvc.Status -eq "Running") {
+                Write-Verbose "$ComputerName - Cluster Service is already running"
+            }
+            else {
+                Invoke-Command -ComputerName $ComputerName -ErrorAction Stop -ScriptBlock {
+                    Get-Service clussvc | Set-Service -StartupType Automatic
+                    net start clussvc /forcequorum
+                }
+            }
+            # Get cluster information
+            Write-Verbose "Gathering cluster information"
+            # Sleep for 5sec to make sure cluster is online
+            Start-Sleep -Seconds 5
+            $Cluster = Get-Cluster $ComputerName -ErrorAction Stop
+            $ClusterName = $Cluster.Name
+            $ClusterNodes = Get-ClusterNode -Cluster $ClusterName -ErrorAction Stop
+            $ClusterPool = Get-ClusterResource -Cluster $ClusterName -ErrorAction Stop | Where-Object { $_.ResourceType -eq "Storage Pool" }
+            $CSVs = Get-ClusterSharedVolume -Cluster $ClusterName -ErrorAction Stop
+
+            # Start other Nodes
+            Write-Verbose "$ClusterName - Starting Cluster Service on remaining Nodes"
+            Foreach ( $Node in ($ClusterNodes | Where-Object { $_.State -eq "Down" }).Name ) {
+                $Service = Get-Service clussvc -ComputerName $Node
+                # Set to automatic start
+                Write-Verbose "$ClusterName - $Node - Setting Cluster Service back to Automatic Startup"
+                $Service | Set-Service -StartupType Automatic -ErrorAction Stop
+                # Start Service
+                Write-Verbose "$ClusterName - $Node - Starting Cluster Service"
+                $Service | Start-Service -ErrorAction Stop
+            }
+            # Sleep for 5sec to make sure cluster nodes are online
+            Write-Verbose "$ClusterName - Wait for Cluster Nodes to join"
+            do {
+                Start-Sleep -Seconds 5
+                $DownNodesCount = Get-ClusterNode -Cluster $ClusterName | Where-Object {
+                    $_.State -ne 'Up'
+                } | Measure-Object | Select-Object -ExpandProperty Count
+            }until(
+                $DownNodesCount -eq 0
+            )
+            # Start Pool
+            Write-Verbose "$ClusterName - Starting Cluster Pool $($ClusterPool.Name)"
+            $ClusterPool | Start-ClusterResource -ErrorAction Stop | Out-Null
+
+            # Start CSVs
+            Write-Verbose "$ClusterName - Starting Cluster Shared Volumes"
+            $CSVs | Start-ClusterResource -ErrorAction Stop | Out-Null
+        }
+        catch {
+            throw "Something went wrong when trying to start the cluster back up`n$($PSItem.ToString())"
+        }
+    }
+    end {
+        "Successfully started cluster on $ComputerName"
     }
 }
