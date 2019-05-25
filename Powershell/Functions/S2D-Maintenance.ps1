@@ -9,10 +9,11 @@ Functions:
 - Enable-S2DNodeMaintenance
 - Disable-S2DNodeMaintenance
 - Get-S2DNodeMaintenanceState
+- Stop-S2DCluster
 
 Maintained by: Ben Thomas (@NZ_BenThomas)
-Version: 1.0.1
-Last Updated: 2019-05-25
+Version: 1.0.3
+Last Updated: 2019-05-26
 Website: https://bcthomas.com
 
 Changelog:
@@ -22,6 +23,8 @@ Changelog:
   - Added verbose output
  - 1.0.2 (2019-05-25)
   - Disabled Verbose Output on Get-Module
+ - 1.0.3 (2019-05-26)
+  - Added Stop-S2DCluster command
 #>
 
 Function Enable-S2DNodeMaintenance { 
@@ -182,6 +185,123 @@ Function Get-S2DNodeMaintenanceState {
     }
     end {
         Write-Verbose "Return state details"
+        $results
+    }
+}
+
+Function Stop-S2DCluster {
+    [cmdletbinding(SupportsShouldProcess, ConfirmImpact = 'High')]
+    param(
+        [string[]]$Name,
+        [switch]$SkipVirtualDiskCheck
+    )
+    begin { 
+        $results = @()
+    }
+    process {
+        Foreach ($Cluster in $Name) {
+            try {
+                Write-Verbose "$Cluster - Gathering required information"
+                $ClusterResources = Get-ClusterResource -Cluster $Cluster
+                $ClusterPool = $ClusterResources | where-object { $_.ResourceType -eq "Storage Pool" }
+                $CSVs = Get-ClusterSharedVolume -Cluster $Cluster
+                $ClusterNodes = Get-ClusterNode -Cluster $Cluster
+                $VirtualDisks = Get-VirtualDisk -CimSession $Cluster
+                # Check Virtual Disks are healthy before shutting down
+                Write-Verbose "$Cluster - Checking for unhealthy volumes"
+                $UnhealthyDisks = $VirtualDisks | Where-Object { 
+                    $_.HealthStatus -ine "Healthy" -and $_.OperationalStatus -ine "OK" 
+                }
+                if ($UnhealthyDisks.Count -gt 0 -and $SkipVirtualDiskCheck) {
+                    Write-Warning "There are $($UnhealthyDisks.Count) unhealthy volumes on $Cluster"
+                }
+                elseif ($UnhealthyDisks.Count -gt 0) {
+                    Throw "$Cluster has $($UnhealthyDisks.Count) unhealthy disks.`nResolve issues with volume health before continuing`nor use -SkipVirtualDiskCheck and try again."
+                }
+                # Check there are no running VMs
+                Write-Verbose "$Cluster - Checking for running VMs"
+                $RunningVMs = $ClusterResources | Where-Object { 
+                    $_.ResourceType -eq "Virtual Machine" -and $_.State -eq "Online" 
+                } 
+                if ($RunningVMs.Count -gt 0) {
+                    # Possibly use ShoudlProcess here instead to offer stopping VMs
+                    Throw "$Cluster cannot to shutdown because there are still running VMs`nVMs: $( ( $RunningVMs -join ", " ) )"
+                }
+                # Stop CSVs
+                Write-Verbose "$Cluster - Starting shutdown proceedures"
+                Foreach ($CSV in $CSVs) {
+                    if ($PSCmdlet.ShouldProcess(
+                            ("Stopping {0} on {1}" -f $CSV.Name, $Cluster),
+                            ("Would you like to stop {0} on {1}?" -f $CSV.Name, $Cluster),
+                            "Stop Cluster Shared Volume"
+                        )
+                    ) {
+                        try {
+                            $CSV | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop
+                        }
+                        catch {
+                            Throw "Something went wrong when trying to stop $($CSV.Name)`nRerun the command.`n$($PSItem.ToString())"
+                        }
+                    }
+                }
+                # Stop Cluster Pool
+                if ($PSCmdlet.ShouldProcess(
+                        ("Stopping {0} on {1}" -f $ClusterPool.Name, $Cluster),
+                        ("Would you like to stop {0} on {1}?" -f $ClusterPool.Name, $Cluster),
+                        "Stop Cluster Pool"
+                    )
+                ) {
+                    try {
+                        $ClusterPool | Stop-ClusterResource -Cluster $Cluster -ErrorAction Stop
+                    }
+                    catch {
+                        Throw "Something went wrong when trying to stop $($ClusterPool.Name)`nRerun the command.`n$($PSItem.ToString())"
+                    }
+                }
+
+                # Stop Cluster
+                if ($PSCmdlet.ShouldProcess(
+                        ("Stopping {0}" -f $Cluster),
+                        ("Would you like to stop {0}?" -f $Cluster),
+                        "Stop Cluster"
+                    )
+                ) {
+                    try {
+                        # Stop Cluster
+                        Write-Verbose "$Cluster - Shutting down Cluster"
+                        Stop-Cluster -Cluster $Cluster -Force -Confirm:$false -ErrorAction Stop
+                        foreach ($Node in $ClusterNodes.Name) {
+                            $Service = Get-Service clussvc -ComputerName $Node
+                            # Stop Cluster Service on hosts
+                            Write-Verbose "$Cluster - $Node - Stopping Cluster Service"
+                            $Service | Stop-Service
+                            # Set Cluster Service to disabled on hosts
+                            Write-Verbose "$Cluster - $Node - Disabling Cluster Service Startup"
+                            $Service | Set-Service -StartupType Disabled
+                        }
+                    }
+                    catch {
+                        Throw "Something went wrong when trying to stop $($Cluster)`nRerun the command.`n$($PSItem.ToString())"
+                    }
+                }
+            }
+            catch {
+                Write-Warning "$($PSItem.ToString())"
+                $results += [pscustomobject][ordered]@{
+                    Name   = $Cluster
+                    Result = "Failed"
+                }
+                continue
+            }
+            Write-Verbose "$Cluster - Writing results"
+            $results += [pscustomobject][ordered]@{
+                Name   = $Cluster
+                Result = "Succeeded"
+            }
+        }
+    }
+    end { 
+        Write-Verbose "Returning results"
         $results
     }
 }
