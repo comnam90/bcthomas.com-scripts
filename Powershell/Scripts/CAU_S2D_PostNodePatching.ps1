@@ -5,7 +5,7 @@ $ScaleUnit = Get-StorageFaultDomain -Type StorageScaleUnit | Where-Object { $_.F
 
 # Exit Storage Maintenance Mode
 try {
-    $ScaleUnit | Disable-StorageMaintenanceMode -Confirm:$false -ErrorAction Stop
+    $ScaleUnit | Disable-StorageMaintenanceMode -ErrorAction Stop
 }
 catch {
     throw "Failed to exit storage maintenance mode, try again"

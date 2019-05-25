@@ -39,11 +39,11 @@ try {
     # Suspend cluster node first, otherwise CAU will fail to pause it after this script finishes
     Suspend-ClusterNode -Name $ComputerName -Drain -RetryDrainOnFailure -Wait -Confirm:$false -ErrorAction Stop
     # Actually enable maintenance mode
-    $ScaleUnit | Enable-StorageMaintenanceMode -Confirm:$false -ErrorAction Stop
+    $ScaleUnit | Enable-StorageMaintenanceMode -ErrorAction Stop
 }
 catch {
     # Make sure node is brought back out of maintenance
-    $ScaleUnit | Disable-StorageMaintenanceMode -Confirm:$false
+    $ScaleUnit | Disable-StorageMaintenanceMode 
     Resume-ClusterNode -Name $ComputerName -Failback -Confirm:$false
     throw "Failed to enter storage maintenance mode, try again"
 }
