@@ -1,28 +1,40 @@
-function Find-AzSAvailableUpdates {
+function Find-AzSAvailableUpdate {
     <#
         .Synopsis
         Checks what updates are available for AzureStack
         .Description
         Can be used to find out what the latest AzureStack Update Version number is or
         what updates need to be applied to a specific version to get it up to date.
+        It returns an array of objects by default with all available updates, however
+        this can be changes to a simple string output using the -SimpleOutput switch.
         .Parameter Version
         Current AzureStack Update Version to check against.
         .Parameter LatestOnly
         Returns the Version Number for the latest AzureStack Update.
         .Example
-        > Find-AzSAvailableUpdates -Version 1.906.1.35
+        > Find-AzSAvailableUpdate -Version 1.1906.1.35
         This will return all updates that need to be applied to get up to date from
         AzureStack Update 1.1906.1.35
         .Example
-        > Find-AzSAvailableUpdates -LatestOnly
+        > Find-AzSAvailableUpdate -LatestOnly
         This will return only the latest available update version.
+        .Example
+        > Find-AzSAvailableUpdates -Release 1906
+        This will search for updates by Release number rather than Update Version.
+        .Example
+        > Find-AzSAvailableUpdate -Release 1906 -SimpleOutput
+        Returns results as a simple string output rather than an object.
         .Notes
         ----------------------------------------------------------
-        Version: 1.1.0
+        Version: 1.2.0
         Maintained By: Ben Thomas (@NZ_BenThomas)
-        Last Updated: 2019-08-18
+        Last Updated: 2019-08-19
         ----------------------------------------------------------
         CHANGELOG:
+            1.2.0
+             - Added Release parameter for searching by release number
+             - Changed ValidatePattern to ValidateScript for more descriptive
+               error messages.
             1.1.0
              - Introduced Begin,Process,End
              - Changed to returning an object by default
@@ -30,11 +42,14 @@ function Find-AzSAvailableUpdates {
             1.0.0
              - Initial Version
     #>
-    [cmdletbinding(DefaultParameterSetName = "AllUpdates")]
+    [cmdletbinding(DefaultParameterSetName = "SpecificVersion")]
     param(
-        [parameter(ParameterSetName = "AllUpdates", Mandatory)]
-        [ValidatePattern("^\d\.\d{4}\.\d+\.\d+$")]
+        [parameter(ParameterSetName = "SpecificVersion", Mandatory)]
+        [ValidateScript( { if ($_ -match "^\d\.\d{4}\.\d+\.\d+$") { $true }else { throw "$_ is not a valid version number. Eg - 1.1906.0.30" } })]
         [string]$Version,
+        [parameter(ParameterSetName = "Release", Mandatory)]
+        [ValidateScript( { if ($_ -match "^\d{4}$") { $true }else { throw "$_ is not a valid release number. Eg - 1906" } })]
+        [string]$Release,
         [parameter(ParameterSetName = "LatestOnly")]
         [Switch]$LatestOnly,
         [Switch]$SimpleOutput
@@ -67,7 +82,24 @@ function Find-AzSAvailableUpdates {
             Select-Object -Last 1
         ).ApplicableUpdate.Version
 
-        if ($PSCmdlet.ParameterSetName -eq "AllUpdates") {
+        if ($PSCmdlet.ParameterSetName -eq "Release") {
+            Write-Verbose "Release $Release has been supplied, looking for matching versions"
+            $PossibleVersion = $Object.AzureStackUpdates.CurrentVersion.Version |
+            Where-Object { ([Version]$_).Minor -eq $Release } |
+            Sort-Object |
+            Select-Object -First 1
+            if ($PossibleVersion) {
+                Write-Verbose "  Found Version $PossibleVersion"
+                $Version = $PossibleVersion
+            } elseif (([version]$latestUpdate).Minor -eq $Release) {
+                Write-Verbose "  Matched latest version $latestUpdate"
+                $Version = $latestUpdate
+            } else {
+                Throw "No matching version found for $Release"
+            }
+        }
+
+        if ($PSCmdlet.ParameterSetName -ne "LatestOnly") {
             Write-Verbose "Creating hashtable with the updates"
             $Object.AzureStackUpdates.CurrentVersion.Foreach{
                 $publishedUpdates[$PSItem.Version] = $PSItem.ApplicableUpdate
