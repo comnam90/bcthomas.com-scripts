@@ -26,11 +26,14 @@ function Find-AzSAvailableUpdate {
         Returns results as a simple string output rather than an object.
         .Notes
         ----------------------------------------------------------
-        Version: 1.2.0
+        Version: 1.3.0
         Maintained By: Ben Thomas (@NZ_BenThomas)
-        Last Updated: 2019-08-19
+        Last Updated: 2019-09-02
         ----------------------------------------------------------
         CHANGELOG:
+            1.3.0
+             - Added PreReqOEMVersion output Object
+             - Added corrupt XML handling for earlier releases
             1.2.0
              - Added Release parameter for searching by release number
              - Changed ValidatePattern to ValidateScript for more descriptive
@@ -64,8 +67,9 @@ function Find-AzSAvailableUpdate {
 
         try {
             Write-Verbose "Attempting to get AzureStack Update list from $URI"
-            $Content = Invoke-RestMethod -Method Get -UseBasicParsing -Uri $URI -ErrorAction Stop
-        } catch {
+            $Content = Invoke-RestMethod -UseBasicParsing -Uri $URI -ErrorAction Stop
+        }
+        catch {
             Write-Warning "Failed to get update list from $URI"
             Throw "$($PSItem.ToString())"
         }
@@ -78,6 +82,7 @@ function Find-AzSAvailableUpdate {
 
         $latestUpdate = (
             $Object.AzureStackUpdates.CurrentVersion | 
+            Select-Object @{n = 'Version'; e = { [version]($_.Version) } }, ApplicableUpdate | 
             Sort-Object -Property Version | 
             Select-Object -Last 1
         ).ApplicableUpdate.Version
@@ -91,10 +96,12 @@ function Find-AzSAvailableUpdate {
             if ($PossibleVersion) {
                 Write-Verbose "  Found Version $PossibleVersion"
                 $Version = $PossibleVersion
-            } elseif (([version]$latestUpdate).Minor -eq $Release) {
+            }
+            elseif (([version]$latestUpdate).Minor -eq $Release) {
                 Write-Verbose "  Matched latest version $latestUpdate"
                 $Version = $latestUpdate
-            } else {
+            }
+            else {
                 Throw "No matching version found for $Release"
             }
         }
@@ -110,48 +117,56 @@ function Find-AzSAvailableUpdate {
                 Write-Verbose "No updates available, checking if it's already on the latest version"
                 if ($Version -ne $latestUpdate) {
                     Write-Error "$Version is not a valid AzureStack revision"
-                } else {
+                }
+                else {
                     Write-Verbose "$Version is the newest version available"
                     $IsLatest = $true
                 }
-            } else {
+            }
+            else {
                 Write-Verbose "$Version needs to be updated"
                 $UpdatesAvailable = $true
                 $Update = $publishedUpdates[$Version]
                 Write-Verbose "  Found $($Update.Version), checking for more"
-                $UpdateDetails = Invoke-WebRequest -Uri $Update.MetadataFile.Uri -UseBasicParsing | 
-                Select-Object -ExpandProperty Content | ForEach-Object {
-                    ([xml]$_).UpdatePackageManifest.UpdateInfo
+                $MetaRaw = Invoke-RestMethod -Uri $Update.MetadataFile.Uri -UseBasicParsing
+                if ($MetaRaw.GetType().Name -ieq "String") {
+                    $MetaRaw = [xml]$MetaRaw.Substring(3)
                 }
+                $UpdateDetails = $MetaRaw.UpdatePackageManifest.UpdateInfo
                 $AvailableUpdates += $UpdateDetails
                 do {
                     $Update = $publishedUpdates[$Update.Version]
                     if (!$Update) {
                         $UpdatesAvailable = $false
-                    } else {
+                    }
+                    else {
                         Write-Verbose "  Found $($Update.Version), checking for more"
-                        $UpdateDetails = Invoke-WebRequest -Uri $Update.MetadataFile.Uri -UseBasicParsing | 
-                        Select-Object -ExpandProperty Content | ForEach-Object {
-                            ([xml]$_).UpdatePackageManifest.UpdateInfo
+                        $MetaRaw = Invoke-RestMethod -Uri $Update.MetadataFile.Uri -UseBasicParsing
+                        if ($MetaRaw.GetType().Name -ieq "String") {
+                            $MetaRaw = [xml]$MetaRaw.Substring(3)
                         }
+                        $UpdateDetails = $MetaRaw.UpdatePackageManifest.UpdateInfo
                         $AvailableUpdates += $UpdateDetails
                     }
                 }until(
                     $UpdatesAvailable -eq $false
                 )
             }
-        } else {
+        }
+        else {
             Write-Verbose "$latestUpdate is the latest AzureStack Update"
             $IsLatest = $true
             $DetailsURI = (
                 $Object.AzureStackUpdates.CurrentVersion | 
+                Select-Object @{n = 'Version'; e = { [version]($_.Version) } }, ApplicableUpdate | 
                 Sort-Object -Property Version | 
                 Select-Object -Last 1
             ).ApplicableUpdate.MetadataFile.Uri
-            $AvailableUpdates += Invoke-WebRequest -Uri $DetailsURI -UseBasicParsing | 
-            Select-Object -ExpandProperty Content | ForEach-Object {
-                ([xml]$_).UpdatePackageManifest.UpdateInfo
+            $MetaRaw = Invoke-RestMethod -Uri $DetailsURI -UseBasicParsing
+            if ($MetaRaw.GetType().Name -ieq "String") {
+                $MetaRaw = [xml]$MetaRaw.Substring(3)
             }
+            $AvailableUpdates += $MetaRaw.UpdatePackageManifest.UpdateInfo
         }
     }
 
@@ -164,22 +179,32 @@ function Find-AzSAvailableUpdate {
                         "*Hotfix*" { "Hotfix" }
                         default { "Unknown" }
                     }
+                    if (!$PSItem.MinOEMVersionRequired) {
+                        [version]$PreReqOEMVersion = "0.0.0.0"
+                    }
+                    else {
+                        [version]$PreReqOEMVersion = $PSItem.MinOEMVersionRequired
+                    }
                     [pscustomobject][ordered]@{
-                        Type          = [string]$Type
-                        Name          = [string]$PSItem.UpdateName
-                        Description   = [string]$PSItem.Description
-                        SizeMB        = [uint64]$PSItem.PackageSizeInMB
-                        Version       = [version]$PSitem.Version
-                        PreReqVersion = [version]$PSItem.MinVersionRequired
-                        KBLink        = [uri]$PSItem.KBLink
+                        Type             = [string]$Type
+                        Name             = [string]$PSItem.UpdateName
+                        Description      = [string]$PSItem.Description
+                        SizeMB           = [uint64]$PSItem.PackageSizeInMB
+                        Version          = [version]$PSitem.Version
+                        PreReqVersion    = [version]$PSItem.MinVersionRequired
+                        PreReqOEMVersion = [version]$PreReqOEMVersion
+                        KBLink           = [uri]$PSItem.KBLink
                     }
                 }
-            } elseif ($PSCmdlet.ParameterSetName -eq "LatestOnly") {
+            }
+            elseif ($PSCmdlet.ParameterSetName -eq "LatestOnly") {
                 Write-Output "The latest update available: $($AvailableUpdates.Version)"
-            } else {
+            }
+            else {
                 Write-Output "The following updates are available for $($Version):`n$($AvailableUpdates.Version -join ', ')"
             }
-        } elseif ($IsLatest -and $SimpleOutput) {
+        }
+        elseif ($IsLatest -and $SimpleOutput) {
             Write-Output "$Version is up to date"
         }
     }
