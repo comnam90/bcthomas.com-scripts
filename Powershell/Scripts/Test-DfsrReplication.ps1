@@ -1,7 +1,55 @@
+<#
+    .Synopsis
+    Tests replication between DFS-R Partners is working
+    .Description
+    This script is designed to query replication groups and folders for a
+    server, and then test replication to and from all replication partners.
+    It creates a file in each replicated folder, and waits for the file to
+    become available on the replication partner or reach a timeout.
+    .Parameter ComputerName
+    One or more servers running DFS-R
+    .Parameter GroupName
+    (Optional) The name of a DFS-R the server should be part of.
+    .Parameter Folder
+    (Optional) A specific folder to test.
+    .Parameter FileName
+    (Optional) The name of the test file that will be created.
+    .Parameter Timeout
+    (Optional) Number of minutes to wait for replication to complete.
+    .Example
+    > Test-DfsrReplication -ComputerName DFSR01
+    This will find all DFS-R Groups and folders on DFSR01, and the servers
+    that DFSR01 replications with. It will create test files on each of the
+    folders, and measure the time it takes to replicate to the DFS-R 
+    partners. If the partner's aren't read-only, it will also test replication
+    back in the other direction.
+    .Example
+    > Test-DfsrReplication -ComputerName DFSR01 -GroupName "User Data"
+    This will only test folders on DFSR01 that are part of the "User Data"
+    DFS-R Group.
+    .Example
+    > Test-DfsrReplication -ComputerName DFSR01 -Folder "Data"
+    This will only test the "Data" folder on DFSR01 and it's replication
+    partners.
+    .Example
+    > Test-DfsrReplication -ComputerName DFSR01 -Timeout 10
+    This will extend the timeout period from the default 5 minutes to
+    10 minutes. It can be useful for slow links between DFS-R partners
+    and also for servers with high change that might have a backlog.
+    .Notes
+    ----------------------------------------------------------
+    Version: 1.0.0
+    Maintained By: Ben Thomas (@NZ_BenThomas)
+    Last Updated: 2019-10-12
+    ----------------------------------------------------------
+    CHANGELOG:
+        1.0.0
+            - Initial Version
+#>
 [cmdletbinding()]
 param(
     # Accepts an array of DFSR Servers
-    [parameter(Mandatory=$false)]
+    [parameter(Mandatory = $false)]
     [alias("SourceComputer")]
     [string[]]$ComputerName = $env:COMPUTERNAME,
     # Accepts a specific GroupName or a willdcard.
@@ -15,37 +63,37 @@ param(
     [int32]$Timeout = 5
 )
 
-Foreach($SourceComputer in $ComputerName){
+Foreach ($SourceComputer in $ComputerName) {
     $DFSRConnections = Get-DfsrConnection -SourceComputerName $SourceComputer -GroupName $GroupName
 
-    if( -not $DFSRConnections.Count -ge 1){
+    if ( -not $DFSRConnections.Count -ge 1) {
         Write-Warning "No connections found matching criteria - Source Computer: $SourceComputer; Group Name: $GroupName"
         Continue
     }
-    else{
+    else {
         Write-Verbose "Found $($DFSRConnections.Count) connections for $SourceComputer"
     }
 
     Foreach ($Connection in $DFSRConnections) {
         Write-Verbose "  $SourceComputer has a connection to DFSR Group $($Connection.GroupName)"
-        $DFSRMemberships = Get-DfsrMembership -GroupName $Connection.GroupName | Group -Property GroupName
+        $DFSRMemberships = Get-DfsrMembership -GroupName $Connection.GroupName | Group-Object -Property GroupName
 
-        Foreach($Group in $DFSRMemberships){
+        Foreach ($Group in $DFSRMemberships) {
 
             $DFSRMembership = $Group.Group
 
-            if(!$PSBoundParameters['Folder']){
+            if (!$PSBoundParameters['Folder']) {
                 $Folder = $DFSRMembership.foldername | Sort-Object | Get-Unique
             }
 
             foreach ($FolderName in $Folder) {
                 Write-Verbose "    Finding members of $FolderName Folder in Group $($Group.Name)"
                 $Memberships = $DFSRMembership.where{ $_.FolderName -ieq $FolderName }
-                if( -not $Memberships -ge 1){
+                if ( -not $Memberships -ge 1) {
                     Write-Warning "$FolderName Folder not found in any of the DFSR Memberships for $SourceComputer"
                     Continue
                 }
-                else{
+                else {
                     $Computers = $Memberships.ComputerName
                     $Exclude = $Memberships.Where{ $_.ReadOnly -eq $true } | Select-Object ComputerName
 
