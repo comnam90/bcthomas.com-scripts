@@ -38,11 +38,13 @@
     and also for servers with high change that might have a backlog.
     .Notes
     ----------------------------------------------------------
-    Version: 1.0.0
+    Version: 1.1.0
     Maintained By: Ben Thomas (@NZ_BenThomas)
-    Last Updated: 2019-10-12
+    Last Updated: 2019-10-13
     ----------------------------------------------------------
     CHANGELOG:
+        1.1.0
+            - Added -OneWay switch
         1.0.0
             - Initial Version
 #>
@@ -60,7 +62,9 @@ param(
     # Name of the file to create for replication testing.
     [string]$FileName = "DFSRTest_$(Get-Date -Format yyyyMMddmmhhss).txt",
     # Specifies a timeout period in minutes to wait for replication to complete
-    [int32]$Timeout = 5
+    [int32]$Timeout = 5,
+    # Tests replication only in one direction
+    [switch]$OneWay
 )
 
 Foreach ($SourceComputer in $ComputerName) {
@@ -76,9 +80,9 @@ Foreach ($SourceComputer in $ComputerName) {
 
     Foreach ($Connection in $DFSRConnections) {
         Write-Verbose "  $SourceComputer has a connection to DFSR Group $($Connection.GroupName)"
-        $DFSRMemberships = Get-DfsrMembership -GroupName $Connection.GroupName | Group-Object -Property GroupName
+        $Groups = Get-DfsrMembership -GroupName $Connection.GroupName | Group-Object -Property GroupName
 
-        Foreach ($Group in $DFSRMemberships) {
+        Foreach ($Group in $Groups) {
 
             $DFSRMembership = $Group.Group
 
@@ -94,13 +98,18 @@ Foreach ($SourceComputer in $ComputerName) {
                     Continue
                 }
                 else {
-                    $Computers = $Memberships.ComputerName
+                    if ( -not $OneWay) {
+                        $Computers = $Memberships.ComputerName
+                    }
+                    else {
+                        $Computers = $SourceComputer
+                    }
                     $Exclude = $Memberships.Where{ $_.ReadOnly -eq $true } | Select-Object ComputerName
 
                     Foreach ($Computer in $Computers) {
                         if ($Computer -inotin $Exclude) {
                             Write-Verbose "      Identifying $Computer's replication partners"
-                            $Targets = $Computers.where{ $_ -ine $Computer }
+                            $Targets = $Memberships.ComputerName.where{ $_ -ine $Computer }
                             $SourceFolder = $Memberships.Where{ $_.ComputerName -ieq $Computer }.ContentPath.Replace(':', '$')
                             $SourcePath = "\\$($Computer)\$($SourceFolder)\"
 
