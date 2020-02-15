@@ -160,14 +160,16 @@ Function Get-PatchStatus {
             $OSVersion = Get-OSVersion -ComputerName $Computer
             if ($OSVersion.major -ge 10) {
                 $CurrentUpdate = $WUReleases | Where-Object { $_.Version -eq $OSVersion }
-                $LatestRelease = $WUReleases.Version | Sort-Object -Descending | Select-Object -First 1
+                $LatestRelease = $WUReleases.Version | Where-Object { $_.Build -eq $OSVersion.Build } | Sort-Object -Descending | Select-Object -First 1
                 if ($OSVersion -lt $LatestRelease) {
+                    Write-Verbose "$OSVersion is less than $LatestRelease"
                     $UpdatesMissing = $WUReleases | Where-Object { $_.Version -gt $OSVersion -and $_.Version.Build -eq $OSVersion.Build }
                     $UpdatesBehind = ($UpdatesMissing | Measure-Object -Property Name).Count
                     [pscustomObject][ordered]@{
                         ComputerName   = $Computer
                         UpToDate       = $false
                         Status         = "N-$($UpdatesBehind)"
+                        DaysBehind     = (New-TimeSpan -Start $CurrentUpdate.ReleaseDate -End $UpdatesMissing[0].ReleaseDate).TotalDays
                         CurrentUpdate  = $CurrentUpdate
                         MissingUpdates = $UpdatesMissing
                     }
@@ -176,6 +178,7 @@ Function Get-PatchStatus {
                         ComputerName   = $Computer
                         UpToDate       = $true
                         Status         = "N-0"
+                        DaysBehind     = 0
                         CurrentUpdate  = $CurrentUpdate
                         MissingUpdates = $null
                     }
