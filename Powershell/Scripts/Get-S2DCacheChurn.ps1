@@ -34,6 +34,7 @@
 [cmdletbinding()]
 param(
     # List of clusters to query
+    [parameter(Mandatory)]
     [string[]]$cluster,
     # (Optional) Only query the last 24 hours
     [switch]$lastDay,
